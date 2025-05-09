@@ -3,12 +3,14 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using System.Linq;
+using System.Collections.Generic;
 using System.IO;
 
 public class SceneViewerEditor : EditorWindow
 {
     private Vector2 scrollPos;
-    private string[] scenePaths;
+    private Dictionary<string, List<string>> folderToScenes;
+    private Dictionary<string, bool> folderFoldouts = new Dictionary<string, bool>();
 
     [MenuItem("Tools/Scene Viewer")]
     public static void ShowWindow()
@@ -19,19 +21,50 @@ public class SceneViewerEditor : EditorWindow
 
     private void LoadScenes()
     {
-        string projectPath = Path.GetFullPath(Application.dataPath);
-        scenePaths = AssetDatabase.FindAssets("t:Scene")
-            .Select(AssetDatabase.GUIDToAssetPath)
-            .Where(path => Path.GetFullPath(path).StartsWith(projectPath))
-            .ToArray();
-    }
+        folderToScenes = new Dictionary<string, List<string>>();
 
+        string projectPath = Path.GetFullPath(Application.dataPath);
+        var allScenePaths = AssetDatabase.FindAssets("t:Scene")
+      .Select(AssetDatabase.GUIDToAssetPath)
+      .Where(path => path.StartsWith("Assets/"))
+      .ToArray();
+
+
+        foreach (var scenePath in allScenePaths)
+        {
+            string folder = Path.GetDirectoryName(scenePath).Replace("\\", "/");
+            if (!folderToScenes.ContainsKey(folder))
+            {
+                folderToScenes[folder] = new List<string>();
+            }
+            folderToScenes[folder].Add(scenePath);
+        }
+    }
 
     private void OnGUI()
     {
-        EditorGUILayout.LabelField("All Project Scenes", EditorStyles.boldLabel);
+        float totalWidth = position.width;
+        float labelWidth = 130f;
+        float buttonWidth = 80f;
+        float spacing = 10f;
+        float totalContentWidth = labelWidth + spacing + buttonWidth;
+        float leftPadding = (totalWidth - totalContentWidth) / 2f;
 
-        if (scenePaths == null || scenePaths.Length == 0)
+        GUILayout.Space(10);
+        EditorGUILayout.BeginHorizontal();
+        GUILayout.Space(leftPadding);
+
+        if (GUILayout.Button("Refresh", GUILayout.Width(buttonWidth)))
+        {
+            LoadScenes();
+        }
+
+        EditorGUILayout.EndHorizontal();
+        GUILayout.Space(10);
+
+        EditorGUILayout.LabelField("Scenes by Folder", EditorStyles.boldLabel);
+
+        if (folderToScenes == null || folderToScenes.Count == 0)
         {
             EditorGUILayout.HelpBox("No scenes found!", MessageType.Info);
             return;
@@ -39,41 +72,63 @@ public class SceneViewerEditor : EditorWindow
 
         scrollPos = EditorGUILayout.BeginScrollView(scrollPos);
 
-        foreach (string scenePath in scenePaths)
+        foreach (var kvp in folderToScenes.OrderBy(f => f.Key))
         {
-            string sceneName = Path.GetFileNameWithoutExtension(scenePath);
-            bool isOpen = IsSceneOpen(scenePath);
+            string folder = kvp.Key;
+            List<string> scenes = kvp.Value;
 
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField(isOpen ?$"[{sceneName}]" : sceneName);
+            if (!folderFoldouts.ContainsKey(folder))
+                folderFoldouts[folder] = true;
 
-            Color originalColor = GUI.backgroundColor;
-            if (isOpen)
+            folderFoldouts[folder] = EditorGUILayout.Foldout(folderFoldouts[folder], folder, true);
+
+            if (folderFoldouts[folder])
             {
-                GUI.backgroundColor = Color.green;
-                GUI.enabled = false;
-                GUILayout.Button("Opened", GUILayout.Width(60));
-                GUI.enabled = true;
-            }
-            else
-            {
-                GUI.backgroundColor = Color.gray;
-                if (GUILayout.Button("Open", GUILayout.Width(60)))
+                EditorGUI.indentLevel++;
+                foreach (var scenePath in scenes.OrderBy(s => s))
                 {
-                    if (EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
-                    {
-                        EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Single);
-                    }
+                    DrawSceneRow(scenePath);
                 }
+                EditorGUI.indentLevel--;
             }
-            GUI.backgroundColor = originalColor;
-
-            EditorGUILayout.EndHorizontal();
         }
 
         EditorGUILayout.EndScrollView();
     }
 
+    private void DrawSceneRow(string scenePath)
+    {
+        string sceneName = Path.GetFileNameWithoutExtension(scenePath);
+        bool isOpen = IsSceneOpen(scenePath);
+
+        EditorGUILayout.BeginHorizontal();
+
+        EditorGUILayout.LabelField(sceneName);
+
+        Color originalColor = GUI.backgroundColor;
+        if (isOpen)
+        {
+            GUI.backgroundColor = Color.green;
+            GUI.enabled = false;
+            GUILayout.Button("Opened", GUILayout.Width(60));
+            GUI.enabled = true;
+        }
+        else
+        {
+            GUI.backgroundColor = Color.gray;
+            if (GUILayout.Button("Open", GUILayout.Width(60)))
+            {
+                if (EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
+                {
+                    EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Single);
+                }
+            }
+        }
+
+        GUI.backgroundColor = originalColor;
+
+        EditorGUILayout.EndHorizontal();
+    }
 
     private bool IsSceneOpen(string scenePath)
     {
